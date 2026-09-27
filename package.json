@@ -44,7 +44,8 @@
     "format:check": "oxfmt --check",
     "size": "size-limit",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run build && bun run test && publint --strict && size-limit",
-    "vendor:protocol": "bun scripts/vendor-protocol.ts"
+    "vendor:protocol": "bun scripts/vendor-protocol.ts",
+    "prepublishOnly": "bun run check"
   },
   "devDependencies": {
     "@mirafive/sdk-browser": "file:../sdk-browser",
