@@ -1,0 +1,105 @@
+{
+  "name": "@mirafive/tracker",
+  "version": "0.5.0",
+  "description": "The MIRA FIVE hosted script: one small loader for privacy-first analytics that fetches feature chunks only when a page needs them.",
+  "keywords": [
+    "ab-testing",
+    "analytics",
+    "cookieless",
+    "feature-flags",
+    "gdpr",
+    "mirafive",
+    "privacy",
+    "tracker"
+  ],
+  "homepage": "https://mirafive.io",
+  "bugs": {
+    "email": "support@mirafive.io"
+  },
+  "license": "MIT",
+  "author": "MIRA FIVE <support@mirafive.io>",
+  "repository": "github:mirafive/tracker",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": true,
+  "exports": {
+    "./mira.js": "./dist/mira.js",
+    "./manifest.json": "./dist/manifest.json",
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "test": "vitest run",
+    "test:browser": "bun run build && bun scripts/browser.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --type-aware --deny-warnings",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "size": "size-limit",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run build && bun run test && publint --strict && size-limit"
+  },
+  "devDependencies": {
+    "@mirafive/sdk-browser": "file:../sdk-browser",
+    "@size-limit/file": "^14.0.1",
+    "@types/node": "^26.6.3",
+    "happy-dom": "^20.0.0",
+    "oxfmt": "^0.70.0",
+    "oxlint": "^1.85.0",
+    "oxlint-tsgolint": "^7.0.2003",
+    "playwright-core": "^1.63.0",
+    "publint": "^0.3.24",
+    "rolldown": "^1.2.11",
+    "size-limit": "^14.0.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  },
+  "size-limit": [
+    {
+      "name": "mira.js (loader: core, pageviews, queue)",
+      "path": "dist/mira.js",
+      "gzip": true,
+      "limit": "3.67 kB"
+    },
+    {
+      "name": "identity chunk",
+      "path": "dist/chunks/identity.*.js",
+      "gzip": true,
+      "limit": "1.16 kB"
+    },
+    {
+      "name": "autocapture chunk",
+      "path": "dist/chunks/autocapture.*.js",
+      "gzip": true,
+      "limit": "0.96 kB"
+    },
+    {
+      "name": "search chunk",
+      "path": "dist/chunks/search.*.js",
+      "gzip": true,
+      "limit": "0.49 kB"
+    },
+    {
+      "name": "flags chunk",
+      "path": "dist/chunks/flags.*.js",
+      "gzip": true,
+      "limit": "2.98 kB"
+    },
+    {
+      "name": "experiments chunk",
+      "path": "dist/chunks/experiments.*.js",
+      "gzip": true,
+      "limit": "0.56 kB"
+    }
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "bun@1.4.2"
+}
