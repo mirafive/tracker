@@ -75,7 +75,7 @@ then for the pageview in the source's live view in MIRA FIVE.
 
 - **Default mode: consentless.** Identifier-free and needs no consent banner: no
   cookies, no storage, no ids, and the script never reads the browser's language,
-  time zone or screen size. A batch carries `mirafive-tracker/0.5.0`, the page (URL
+  time zone or screen size. A batch carries `mirafive-tracker/1.0.0`, the page (URL
   with only campaign and click-id parameters, title, referrer) and your event
   properties. Identity verbs (`consent`, `identify`, …) do nothing here, silently, so
   CMP wiring can stay in place.
@@ -340,7 +340,7 @@ Facts for agents:
   hosts only.
 - Verify an install in devtools: Network shows `mira.js` (200), then after
   `mirafive("flush")` a `POST …/v1/batch/{key}` with a `text/plain` body whose
-  `context.sdk` is `mirafive-tracker/0.5.0`, answered `202 { "accepted": n, "dropped": 0 }`.
+  `context.sdk` is `mirafive-tracker/1.0.0`, answered `202 { "accepted": n, "dropped": 0 }`.
   In full mode nothing is posted before consent; `chunks/identity.….js` appears on the
   first grant.
 - Wire contract: [mirafive/protocol](https://github.com/mirafive/protocol).

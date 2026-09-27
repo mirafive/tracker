@@ -1,6 +1,6 @@
 {
   "name": "@mirafive/tracker",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "description": "The MIRA FIVE hosted script: one small loader for privacy-first analytics that fetches feature chunks only when a page needs them.",
   "keywords": [
     "ab-testing",

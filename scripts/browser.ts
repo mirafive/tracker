@@ -208,7 +208,7 @@ try {
   )
   check(
     "consentless: context is only the sdk name",
-    JSON.stringify(batches[0]?.body.context) === '{"sdk":"mirafive-tracker/0.5.0"}',
+    JSON.stringify(batches[0]?.body.context) === '{"sdk":"mirafive-tracker/1.0.0"}',
     batches[0]?.body.context
   )
   check(

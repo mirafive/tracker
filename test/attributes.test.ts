@@ -16,7 +16,7 @@ test("a bare tag sends a consentless pageview as mirafive-tracker, cleaned, with
   const [batch] = await flushed(page, 1)
 
   expect(page.batchUrls).toEqual([`https://events.mirafive.io/v1/batch/${KEY}`])
-  expect(batch).toMatchObject({ v: 1, mode: "consentless", context: { sdk: "mirafive-tracker/0.5.0" } })
+  expect(batch).toMatchObject({ v: 1, mode: "consentless", context: { sdk: "mirafive-tracker/1.0.0" } })
   expect(Object.keys(batch!.context)).toEqual(["sdk"])
   expect(batch!.events).toMatchObject([
     { name: "$pageview", page: { url: "https://shop.example/pricing?utm_source=news" } }
