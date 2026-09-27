@@ -8,13 +8,14 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: cdn
   cancel-in-progress: false
 
 env:
-  IMAGE: registry.git.cloo-gmbh.de/cloo/mirafive/mirafive/cdn
+  IMAGE: ghcr.io/mirafive/cdn
 
 jobs:
   deploy:
@@ -26,9 +27,9 @@ jobs:
 
       - uses: docker/login-action@v3
         with:
-          registry: registry.git.cloo-gmbh.de
-          username: ${{ secrets.CDN_REGISTRY_USER }}
-          password: ${{ secrets.CDN_REGISTRY_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # The Coolify app pulls :latest; the sha tag is there to roll back to.
       - uses: docker/build-push-action@v6
@@ -39,6 +40,9 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=cdn.mirafive.io: the MIRA FIVE tracker served by nginx
 
       # Through the API: the Coolify CLI still sends GET to /deploy, which 4.3 refuses.
       - name: Deploy on Coolify
