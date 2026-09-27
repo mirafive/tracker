@@ -1,21 +1,30 @@
 name: CDN
 
-# Builds cdn/Dockerfile, pushes it to the registry the Coolify app pulls from, deploys it and checks
-# cdn.mirafive.io serves this version. Runs after every release; by hand: gh workflow run cdn.yml --ref vX.Y.Z
+# Uploads a release's files to the Bunny storage zone behind cdn.mirafive.io and checks the CDN serves
+# that version. Runs after every release; by hand (also to roll back): gh workflow run cdn.yml -f tag=vX.Y.Z
+#
+# The files are the GitHub release assets, so the CDN serves the bytes the release published and the SRI
+# hashes in manifest.json match. Content-hashed files are uploaded once and never replaced, so every old
+# loader and chunk stays available. mira.js and manifest.json are replaced last, once everything they
+# point to is in place. Cache headers and CORS are Bunny pull zone edge rules, not set here.
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to serve, e.g. v1.0.0
+        required: true
   workflow_call:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: cdn
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/mirafive/cdn
+  STORAGE: https://${{ vars.BUNNY_STORAGE_HOST || 'storage.bunnycdn.com' }}/${{ vars.BUNNY_STORAGE_ZONE || 'mirafive-cdn' }}
+  CDN: https://${{ vars.BUNNY_CDN_HOST || 'cdn.mirafive.io' }}
 
 jobs:
   deploy:
@@ -23,55 +32,76 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # The Coolify app pulls :latest; the sha tag is there to roll back to.
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: cdn/Dockerfile
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:sha-${{ github.sha }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.description=cdn.mirafive.io: the MIRA FIVE tracker served by nginx
-
-      # Through the API: the Coolify CLI still sends GET to /deploy, which 4.3 refuses.
-      - name: Deploy on Coolify
+      - name: Release files
         env:
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-          COOLIFY_URL: ${{ vars.COOLIFY_URL }}
-          APP: ${{ vars.COOLIFY_CDN_APP }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          deployment=$(curl -fsS -X POST -H "Authorization: Bearer $COOLIFY_TOKEN" \
-            "$COOLIFY_URL/api/v1/deploy?uuid=$APP&force=false" | jq -r '.deployments[0].deployment_uuid')
-          echo "deployment $deployment"
-          for _ in $(seq 1 60); do
-            status=$(curl -fsS -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_URL/api/v1/deployments/$deployment" | jq -r .status)
-            echo "status $status"
-            case "$status" in
-              finished) exit 0 ;;
-              failed|cancelled*) exit 1 ;;
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release tag: $TAG"; exit 1; }
+          mkdir -p site/chunks
+          gh release download "$TAG" --dir release
+          for f in release/*.js; do
+            name=$(basename "$f")
+            case "$name" in
+              mira.js|mira.????????.js) mv "$f" site/ ;;
+              *) mv "$f" "site/chunks/$name" ;;
             esac
+          done
+          mv release/manifest.json site/
+          cp cdn/legacy/*.js site/
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          test "$(jq -r .version site/manifest.json)" = "${TAG#v}"
+          jq -r '.loader.file, (.chunks[].file)' site/manifest.json | while read -r f; do
+            test -f "site/$f" || { echo "::error::manifest.json names $f, which the release does not have"; exit 1; }
+          done
+          find site -type f | sort
+
+      - name: Upload
+        env:
+          KEY: ${{ secrets.BUNNY_STORAGE_PASSWORD }}
+        run: |
+          # name -> checksum of what the zone already holds, for the root and chunks/.
+          existing=$( { curl -fsS -H "AccessKey: $KEY" "$STORAGE/"; curl -fsS -H "AccessKey: $KEY" "$STORAGE/chunks/" || echo '[]'; } \
+            | jq -r '.[] | select(.IsDirectory | not) | "\(.Path | sub("^/[^/]+/"; ""))\(.ObjectName) \(.Checksum)"')
+
+          put() { # path in site/
+            sum=$(sha256sum "site/$1" | cut -d' ' -f1 | tr a-f A-F)
+            curl -fsS -X PUT -H "AccessKey: $KEY" -H "Checksum: $sum" -H "Content-Type: application/octet-stream" \
+              --data-binary "@site/$1" "$STORAGE/$1" > /dev/null
+            echo "uploaded $1"
+          }
+
+          immutable() { # a content-hashed file: upload once, never replace
+            sum=$(sha256sum "site/$1" | cut -d' ' -f1 | tr a-f A-F)
+            have=$(printf '%s\n' "$existing" | awk -v f="$1" '$1 == f { print $2 }')
+            if [ -z "$have" ]; then put "$1"
+            elif [ "$have" = "$sum" ]; then echo "kept $1"
+            else echo "::error::$1 is already on the CDN with other content; a hashed file never changes"; exit 1
+            fi
+          }
+
+          for f in site/chunks/*.js; do immutable "chunks/$(basename "$f")"; done
+          for f in site/mira.????????.js site/?.????????.js; do immutable "$(basename "$f")"; done
+          put c.js
+          put f.js
+          put manifest.json
+          put mira.js
+
+      - name: Storage holds this version
+        env:
+          KEY: ${{ secrets.BUNNY_STORAGE_PASSWORD }}
+        run: |
+          test "$(curl -fsS -H "AccessKey: $KEY" "$STORAGE/manifest.json" | jq -r .version)" = "$VERSION"
+          cmp <(curl -fsS -H "AccessKey: $KEY" "$STORAGE/mira.js") site/mira.js
+
+      # The edge keeps manifest.json for a minute and mira.js for five, so wait that out instead of purging
+      # (a purge needs the account API key, which this public repository does not hold).
+      - name: The CDN serves this version
+        run: |
+          for _ in $(seq 1 40); do
+            got=$(curl -fsS "$CDN/manifest.json" | jq -r .version) && [ "$got" = "$VERSION" ] \
+              && curl -fsS "$CDN/mira.js" | cmp - site/mira.js && exit 0
             sleep 10
           done
-          echo "::error::deployment did not finish in 10 minutes"
-          exit 1
-
-      - name: cdn.mirafive.io serves this version
-        run: |
-          want=$(jq -r .version package.json)
-          for _ in $(seq 1 12); do
-            got=$(curl -fsS "https://cdn.mirafive.io/manifest.json?ci=$GITHUB_RUN_ID" | jq -r .version) && [ "$got" = "$want" ] && exit 0
-            sleep 5
-          done
-          echo "::error::cdn.mirafive.io serves ${got:-nothing}, expected $want"
+          echo "::error::$CDN serves ${got:-nothing}, expected $VERSION"
           exit 1
