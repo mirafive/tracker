@@ -33,7 +33,7 @@ test("without data-key it warns, collects nothing and leaves the queue alone", a
     noWait: true
   })
 
-  expect(page.warnings).toEqual(["[mirafive] mira.js needs data-key"])
+  expect(page.warnings).toEqual(["[mirafive] no data-key"])
   expect((page.window["mirafive"] as { q?: unknown[] }).q).toHaveLength(1)
   expect(page.batches).toEqual([])
 })

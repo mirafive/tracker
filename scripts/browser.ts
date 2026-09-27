@@ -29,12 +29,21 @@ const batches: Received[] = []
 const chunkRequests: string[] = []
 const flagRequests: string[] = []
 let tamper = false
+let slowIdentity = 0
 
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://localhost")
   const cors = { "access-control-allow-origin": "*" }
 
   if (url.pathname.startsWith("/dist/")) {
+    if (slowIdentity && url.pathname.includes("/identity.")) {
+      setTimeout(() => {
+        slowIdentity = 0
+        server.emit("request", request, response)
+      }, slowIdentity)
+      return
+    }
+
     let body = readFileSync("." + url.pathname, "utf8")
 
     if (url.pathname.includes("/chunks/")) {
@@ -272,6 +281,33 @@ try {
   check("full: ids stored under the key's namespace", stored.includes("mirafive:mf_ab12cd34:aid"), stored)
   await page.close()
 
+  // 4b. Between the grant and identity's arrival, navigations and events are held, the landing pageview sent once.
+  reset()
+  page = await visit('data-mode="full"')
+  slowIdentity = 500
+  await command(page, "consent", true)
+  await page.evaluate(() => history.pushState({}, "", "/page/held"))
+  await page.waitForTimeout(50)
+  await command(page, "track", "held-event")
+  await until(() => chunkRequests.includes("identity"), 2000)
+  await page.waitForFunction(() => window.mirafive("anonymousId", () => {}) !== undefined)
+  await command(page, "flush")
+  await until(() => batches.length)
+
+  const held = batches.flatMap((batch) => batch.body.events)
+
+  check(
+    "hold: landing pageview once, held navigation and event sent with ids after identity",
+    JSON.stringify(held.map((event) => [event.name, event.page?.url.split(String(port()))[1]])) ===
+      JSON.stringify([
+        ["$pageview", "/page"],
+        ["$pageview", "/page/held"],
+        ["held-event", "/page/held"]
+      ]) && held.every((event) => event.anonymousId),
+    held
+  )
+  await page.close()
+
   // 5. Flags load from beside the loader and answer; a tampered chunk is blocked by SRI.
   reset()
   page = await visit("data-flags")
@@ -290,18 +326,28 @@ try {
 
   const errors: string[] = []
 
-  page.on("console", (message) => void (message.type() === "error" && errors.push(message.text())))
+  const warnings: string[] = []
+
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      errors.push(message.text())
+    } else if (message.type() === "warning") {
+      warnings.push(message.text())
+    }
+  })
   await page.goto(`http://site.test:${port()}/page?attributes=data-flags`)
   await page.waitForFunction(() => typeof window.mirafive === "function" && !("q" in window.mirafive))
   await until(() => chunkRequests.length)
   await page.waitForTimeout(300)
   check(
-    "sri: a tampered chunk is requested but never runs",
-    chunkRequests.join() === "flags" &&
+    "sri: a tampered chunk is requested, never runs, and the tracker says so",
+    // The flag read below retries the chunk, which is blocked again.
+    chunkRequests[0] === "flags" &&
       flagRequests.length === 0 &&
       (await command(page, "flag", "new-checkout", false)) === false &&
-      errors.some((text) => /integrity/i.test(text)),
-    { chunkRequests, flagRequests, errors }
+      errors.some((text) => /integrity/i.test(text)) &&
+      warnings.includes("[mirafive] flags chunk failed"),
+    { chunkRequests, flagRequests, errors, warnings }
   )
   tamper = false
   await page.close()

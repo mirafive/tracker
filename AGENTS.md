@@ -15,6 +15,7 @@ bun run build            # dist/: chunks, loader with their SRI baked in, pinned
 bun run test             # vitest: each test runs the built dist/ files in its own happy-dom Window
 bun run test:browser     # build, then drive the installed Chrome against a local stub server
 bun run size             # size-limit against the limits in package.json
+bun run vendor:protocol  # refresh src/protocol from ../protocol (or MIRAFIVE_PROTOCOL)
 ```
 
 Tests run the built files, so build before `bun run test`. `test:browser` uses
@@ -25,6 +26,8 @@ browser.
 
 - API.md is the contract for the attributes, verbs, load rules and build output. Do not
   change them without changing API.md first.
+- `src/protocol/` is vendored (`package.json#mirafive.protocol`). Never edit it; change
+  mirafive/protocol and run `bun run vendor:protocol`.
 - The tracker is built from `@mirafive/sdk-browser` and must not reimplement a feature:
   the loader reads attributes, runs the queue and loads chunks; each chunk is one
   sdk-browser plugin entry plus `register()`. A behaviour change belongs in sdk-browser.
@@ -36,6 +39,9 @@ browser.
 - Bundle size is the headline goal: every file has a size-limit entry, set to the
   measured size plus about 3 %. A change that grows one explains why.
 - The loader output must stay ES2020 syntax; the build fails on newer operators.
+- Setup problems (no script tag, no or malformed `data-key`, a chunk that fails to load)
+  warn on every host; everything else uses the core's development-only warnings. A
+  throwing call never stops the queue.
 - Consentless pages never load a chunk they did not ask for, and full-mode pages never
   load identity before a consent grant; `test/chunks.test.ts` and the browser test
   assert both.

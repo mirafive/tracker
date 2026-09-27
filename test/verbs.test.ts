@@ -35,10 +35,12 @@ test("verbs waiting for identity are replayed in call order once it arrives", as
 
   const events = (await flushed(page, 1)).flatMap((batch) => batch.events)
 
-  // $identify came before consent, so the full-mode gate dropped it, exactly as with sdk-browser.
-  expect(events.map((event) => event.name)).toEqual(["$pageview", "signup"])
-  expect(events[0]).toMatchObject({ userId: "u_1", properties: { $boot: 1 } })
-  expect(events[1]).toMatchObject({ userId: "u_1" })
+  // track ran in the drain and the landing pageview a microtask later, both held; identify waited for identity.
+  // The grant released all three, with the user the page identified.
+  expect(events.map((event) => event.name)).toEqual(["signup", "$pageview", "$identify"])
+  expect(events.every((event) => event.userId === "u_1" && event.anonymousId)).toBe(true)
+  expect(events[1]!.properties).toEqual({ $boot: 1 })
+  expect(events[2]!.properties).toEqual({ plan: "pro" })
 })
 
 test("core verbs called while identity is on its way are not dropped", async () => {
@@ -124,7 +126,7 @@ test("identity verbs are silent in consentless mode", async () => {
 test("unknown verbs warn in development only", async () => {
   page = await open({ url: "http://localhost/", attributes: { "data-track-localhost": "" } })
   expect(page.mirafive("event", "x")).toBeUndefined()
-  expect(page.warnings).toEqual(["[mirafive] unknown verb: event"])
+  expect(page.warnings).toEqual(["[mirafive] unknown verb event"])
   await page.close()
 
   page = await open()
@@ -145,4 +147,28 @@ test("a second loader on the page stays out of the way", async () => {
 
   expect(page.window["mirafive"]).toBe(first)
   expect(names(await flushed(page, 1))).toEqual(["$pageview"])
+})
+
+test("pageviews and events while identity downloads are held and sent with ids, the landing pageview once", async () => {
+  page = await open({
+    attributes: full,
+    before: snippet("mirafive('consent', true)"),
+    delay: { identity: 100 }
+  })
+
+  // Identity was requested in the drain and is still on its way.
+  expect(page.chunks).toEqual(["identity"])
+  page.window.history.pushState({}, "", "/checkout")
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  page.window.eval("mirafive('track', 'clicked')")
+  await page.until(() => page!.mirafive("anonymousId", () => {}) !== undefined)
+
+  const events = (await flushed(page, 1)).flatMap((batch) => batch.events)
+
+  expect(events.map((event) => [event.name, event.page?.url])).toEqual([
+    ["$pageview", "https://shop.example/pricing?utm_source=news"],
+    ["$pageview", "https://shop.example/checkout"],
+    ["clicked", "https://shop.example/checkout"]
+  ])
+  expect(events.every((event) => event.anonymousId)).toBe(true)
 })

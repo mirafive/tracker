@@ -43,7 +43,8 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "size": "size-limit",
-    "check": "bun run format:check && bun run lint && bun run typecheck && bun run build && bun run test && publint --strict && size-limit"
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run build && bun run test && publint --strict && size-limit",
+    "vendor:protocol": "bun scripts/vendor-protocol.ts"
   },
   "devDependencies": {
     "@mirafive/sdk-browser": "file:../sdk-browser",
@@ -65,13 +66,13 @@
       "name": "mira.js (loader: core, pageviews, queue)",
       "path": "dist/mira.js",
       "gzip": true,
-      "limit": "3.67 kB"
+      "limit": "4.44 kB"
     },
     {
       "name": "identity chunk",
       "path": "dist/chunks/identity.*.js",
       "gzip": true,
-      "limit": "1.16 kB"
+      "limit": "1.23 kB"
     },
     {
       "name": "autocapture chunk",
@@ -89,7 +90,7 @@
       "name": "flags chunk",
       "path": "dist/chunks/flags.*.js",
       "gzip": true,
-      "limit": "2.98 kB"
+      "limit": "3.07 kB"
     },
     {
       "name": "experiments chunk",
@@ -101,5 +102,10 @@
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "bun@1.4.2"
+  "packageManager": "bun@1.4.2",
+  "mirafive": {
+    "protocol": [
+      "key"
+    ]
+  }
 }

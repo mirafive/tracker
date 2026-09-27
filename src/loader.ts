@@ -1,7 +1,8 @@
 import { createMira } from "@mirafive/sdk-browser"
-import type { MiraCore, MiraOptions } from "@mirafive/sdk-browser"
+import type { MiraCore } from "@mirafive/sdk-browser"
 import { pageviews } from "@mirafive/sdk-browser/pageviews"
 
+import { KEY_PATTERN } from "./protocol/key.ts"
 import type { Factory, Feature, TrackerGlobals } from "./types.ts"
 
 // Each chunk's sha256 digest (base64), in `features` order.
@@ -20,6 +21,10 @@ const features: Feature[] = ["identity", "flags", "experiments", "search", "auto
 const needs: Partial<Record<Feature, Feature>> = { experiments: "flags", search: "identity" }
 const chunks = __CHUNKS__.split(" ")
 
+// Setup problems: shown everywhere, unlike the core's development-only warnings.
+// oxlint-disable-next-line no-console -- a broken install would otherwise look like one that works
+const alert = (message: string): void => console.warn("[mirafive] " + message)
+
 const stored = (): boolean | void => {
   try {
     return Object.keys(localStorage).some((name) => name.startsWith("mirafive:"))
@@ -28,28 +33,32 @@ const stored = (): boolean | void => {
   }
 }
 
-const on = (value: string | undefined): value is string => value !== undefined && !/^(off|false)$/.test(value)
+// A present attribute is on unless it says off or false.
+const on = (value: string | undefined): boolean => value !== undefined && !/^(off|false)$/i.test(value.trim())
 
-const start = (script: HTMLScriptElement): void => {
+const start = (script: HTMLScriptElement, key: string): void => {
   const w = window as Window & TrackerGlobals
   const d = document
   const data = script.dataset
   const full = data["mode"] === "full"
-  const hash = "hash" in data
-  const search = data["siteSearch"]
-  const searching = full && on(search)
-  const parameters = search && !/^(on|true|)$/.test(search) ? search.split(/ *, */) : undefined
+  const hash = on(data["hash"])
+  const searching = full && on(data["siteSearch"])
+  const parameters = data["siteSearch"]
+    ?.split(",")
+    .map((name) => name.trim())
+    .filter((name) => name && !/^(on|true)$/i.test(name))
   const factories: Partial<Record<Feature, Factory>> = {}
   const requested: Partial<Record<Feature, 1>> = {}
   const applied: Partial<Record<Feature, 1>> = {}
-  let waiting: Args[] = []
+  let waiting: [Feature, Args][] = []
+  let holding: 0 | 1 = 0
   let core = undefined as MiraCore | undefined
 
   const mira = createMira({
-    // key, host and mode as given; the other attributes are ignored options (and data-secret-key throws).
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- data-key is checked below, the rest is optional
-    ...(data as unknown as MiraOptions),
-    trackLocalhost: "trackLocalhost" in data,
+    key,
+    ...(data["host"] ? { host: data["host"] } : {}),
+    mode: full ? "full" : "consentless",
+    trackLocalhost: on(data["trackLocalhost"]),
     plugins: [
       {
         // createMira only checks that a plugin named identity exists; the real one arrives as a chunk.
@@ -60,7 +69,7 @@ const start = (script: HTMLScriptElement): void => {
           given.state.hash = hash
         }
       },
-      ...("manual" in data ? [] : [pageviews({ hash })])
+      ...(on(data["manual"]) ? [] : [pageviews({ hash })])
     ]
   })
 
@@ -73,6 +82,14 @@ const start = (script: HTMLScriptElement): void => {
   const { state } = c
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- verbs call members by name
   const client = mira as unknown as Record<string, (...args: unknown[]) => unknown>
+
+  const answer = (args: Args, value?: unknown): void => {
+    const callback = args[args.length - 1]
+
+    if (typeof callback === "function") {
+      callback(value)
+    }
+  }
 
   const load = (feature: Feature): void => {
     if (!requested[feature]) {
@@ -87,16 +104,43 @@ const start = (script: HTMLScriptElement): void => {
       ).href
       element.integrity = "sha256-" + digest
       element.crossOrigin = "anonymous"
+      // Network, SRI or CSP: a later need retries; what waited for this chunk is settled now.
+      // oxlint-disable-next-line unicorn/prefer-add-event-listener -- our own element, one handler
+      element.onerror = () => {
+        const settled = waiting.filter(([waits]) => waits === feature)
+
+        delete requested[feature]
+        waiting = waiting.filter(([waits]) => waits !== feature)
+        alert(feature + " chunk failed")
+
+        if (feature === "identity") {
+          holding = 0
+          c.release(false)
+        }
+
+        // With identity no longer on its way, anonymousId answers undefined.
+        settled.forEach(([, args]) => args[0] === "anonymousId" && safe(args))
+      }
       d.head.append(element)
     }
   }
 
-  // Identity comes with the first grant. A decline loads it only to forget ids a past visit stored.
-  const answered = (answer: unknown): void => {
-    const granted = answer === true || Object.values(answer || 0).some(Boolean)
+  // Identity comes with the first grant. A decline loads it only to forget ids a past visit stored;
+  // otherwise the decline is recorded here, so flags stop drawing for an unanswered visitor.
+  const answered = (given: unknown): void => {
+    const granted = given === true || Object.values(given || 0).some(Boolean)
+
+    if (granted && !applied.identity && !holding) {
+      // Events until identity arrives are kept; identity releases them.
+      holding = 1
+      c.hold()
+    }
 
     if (granted || stored()) {
       load("identity")
+    } else if (!requested.identity) {
+      state.consent = {}
+      c.emit("consent", {})
     }
 
     if (granted && searching) {
@@ -117,13 +161,16 @@ const start = (script: HTMLScriptElement): void => {
     const name = String(verb)
     const index = verbs.indexOf(name)
     const own = index < 3 ? "" : index < 7 ? "identity" : index < 8 ? "search" : "flags"
-    // While a granted consent waits for identity, core verbs wait too, or the full-mode gate drops them.
-    const feature = own || (full && requested.identity ? "identity" : "")
-    const callback = index === 6 && rest.pop()
+    // Held events reach the queue only when identity releases them, so flush waits for it.
+    const feature = own || (index === 2 && holding && !applied.identity ? "identity" : "")
     let result: unknown
 
     if (index < 0) {
-      return c.warn("unknown verb: " + name)
+      return c.warn("unknown verb " + name)
+    }
+
+    if (index === 6) {
+      rest.pop()
     }
 
     if (full && index === 3) {
@@ -146,17 +193,26 @@ const start = (script: HTMLScriptElement): void => {
         own === "flags" ||
         (full && (feature === "search" ? searching : index !== 6 || requested.identity))
       ) {
-        return void waiting.push(args)
+        return void waiting.push([feature, args])
       }
     } else {
       result = client[methods[name] ?? name]?.(...rest)
     }
 
-    if (typeof callback === "function") {
-      callback(result)
+    if (index === 6) {
+      answer(args, result)
     }
 
     return result
+  }
+
+  // One bad call (a throwing callback, a bad argument) must not stop the calls after it.
+  const safe = (args: Args): unknown => {
+    try {
+      return run(args)
+    } catch (error) {
+      return c.warn(`${String(args[0])}: ${String(error)}`)
+    }
   }
 
   w.__mirafive_chunk = (feature, factory) => {
@@ -171,11 +227,13 @@ const start = (script: HTMLScriptElement): void => {
 
         delete factories[next]
         applied[next] = 1
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- only siteSearch reads it
-        mira.use(ready({ parameters } as never))
+        mira.use(
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- only siteSearch reads it
+          ready({ parameters: parameters?.length ? parameters : undefined } as never)
+        )
         // In call order; whatever still waits for another chunk queues again.
         waiting = []
-        queued.forEach(run)
+        queued.forEach(([, args]) => safe(args))
       }
     }
   }
@@ -188,7 +246,7 @@ const start = (script: HTMLScriptElement): void => {
     load("autocapture")
   }
 
-  if ("flags" in data || d.getElementById("mirafive-flags")) {
+  if (on(data["flags"]) || d.getElementById("mirafive-flags")) {
     load("flags")
   }
 
@@ -201,16 +259,24 @@ const start = (script: HTMLScriptElement): void => {
 
   entries.push = (...added) => (snippet(), push.apply(entries, added))
 
-  w.mirafive?.q?.forEach(run)
+  const stub = w.mirafive
 
-  w.mirafive = (...args) => run(args)
+  // Swapped first: whatever the drain does, the page never keeps the stub.
+  w.mirafive = (...args) => safe(args)
+  stub?.q?.forEach(safe)
 }
 
 const script = document.currentScript
+const key = script instanceof HTMLScriptElement ? script.dataset["key"] : undefined
 
-if (script instanceof HTMLScriptElement && script.dataset["key"]) {
-  start(script)
+if (!(script instanceof HTMLScriptElement)) {
+  alert("no script tag")
+} else if (!key) {
+  alert("no data-key")
 } else {
-  // oxlint-disable-next-line no-console -- a broken install would otherwise look like one that works
-  console.warn("[mirafive] mira.js needs data-key")
+  if (!KEY_PATTERN.test(key) && !/^mira_ik_[\w-]+$/.test(key)) {
+    alert("bad key")
+  }
+
+  start(script, key)
 }

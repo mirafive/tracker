@@ -20,6 +20,7 @@ export interface Batch {
     name: string
     properties?: Record<string, unknown>
     anonymousId?: string
+    userId?: string
     page?: { url: string }
   }[]
 }
@@ -54,6 +55,12 @@ export interface OpenOptions {
   base?: string
   /** Load the loader and do not wait for it to take over `window.mirafive`. */
   noWait?: boolean
+  /** Chunk names answered with a 404 (a network, SRI or CSP failure looks the same to the page). */
+  fail?: string[]
+  /** Milliseconds a chunk's response is held back, by chunk name. */
+  delay?: Record<string, number>
+  /** What /v1/flags answers. */
+  flags?: object
 }
 
 const chunkName = (url: string, base: string): string | undefined =>
@@ -80,7 +87,10 @@ export const open = async ({
   body = "",
   url = "https://shop.example/pricing?utm_source=news&secret=1",
   base = CDN,
-  noWait = false
+  noWait = false,
+  fail = [],
+  delay = {},
+  flags = flagDocument
 }: OpenOptions = {}): Promise<Page> => {
   const chunks: string[] = []
   const batches: Batch[] = []
@@ -105,6 +115,12 @@ export const open = async ({
 
               if (name) {
                 chunks.push(name)
+
+                await new Promise((resolve) => setTimeout(resolve, delay[name] ?? 0))
+
+                if (fail.includes(name)) {
+                  return respond("", 404) as never
+                }
               }
 
               return respond(readFileSync("dist/" + request.url.slice(base.length), "utf8")) as never
@@ -120,7 +136,7 @@ export const open = async ({
             if (request.url.startsWith(HOST + "/v1/flags/")) {
               flagRequests.push(request.method + " " + request.url)
 
-              return respond(JSON.stringify(flagDocument)) as never
+              return respond(JSON.stringify(flags)) as never
             }
 
             return respond("{}", 404) as never

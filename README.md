@@ -8,24 +8,24 @@ feature chunks only when a page needs them.
 
 | File | min + gzip | Loaded when |
 |---|---|---|
-| `mira.js` (loader: core, pageviews, command queue) | 3.56 kB | always |
-| `chunks/identity.<hash>.js` | 1.12 kB | `data-mode="full"`, on the first consent grant |
-| `chunks/autocapture.<hash>.js` | 0.93 kB | `data-autocapture` |
+| `mira.js` (loader: core, pageviews, command queue) | 4.31 kB | always |
+| `chunks/identity.<hash>.js` | 1.19 kB | `data-mode="full"`, on the first consent grant |
+| `chunks/autocapture.<hash>.js` | 0.92 kB | `data-autocapture` |
 | `chunks/search.<hash>.js` | 0.47 kB | `data-site-search`, full mode, after consent |
-| `chunks/flags.<hash>.js` | 2.89 kB | `data-flags`, the first flag verb, a bootstrap block, or a page experiment |
+| `chunks/flags.<hash>.js` | 2.98 kB | `data-flags`, the first flag verb, a bootstrap block, or a page experiment |
 | `chunks/experiments.<hash>.js` | 0.54 kB | full mode, and a page experiment snippet decided something |
 
 What a page downloads:
 
 | Page | Bytes |
 |---|---|
-| Default (consentless, automatic pageviews) | 3.56 kB |
-| … with `data-autocapture` | 4.49 kB |
-| `data-mode="full"`, visitor has not consented (or declined) | 3.56 kB |
-| `data-mode="full"`, visitor consented | 4.68 kB |
-| … with `data-site-search` | 5.15 kB |
-| Any page reading flags | + 2.89 kB |
-| A full-mode page running a page experiment | + 3.43 kB (flags and experiments) |
+| Default (consentless, automatic pageviews) | 4.31 kB |
+| … with `data-autocapture` | 5.23 kB |
+| `data-mode="full"`, visitor has not consented (or declined) | 4.31 kB |
+| `data-mode="full"`, visitor consented | 5.50 kB |
+| … with `data-site-search` | 5.97 kB |
+| Any page reading flags | + 2.98 kB |
+| A full-mode page running a page experiment | + 3.52 kB (flags and experiments) |
 
 The loader carries the sha256 SRI digests of all five chunks (and derives each chunk's
 file name from its digest); a chunk is never downloaded on a page that does not need it. Each chunk is the matching `@mirafive/sdk-browser` plugin
@@ -90,7 +90,8 @@ then for the pageview in the source's live view in MIRA FIVE.
     answer.
   - `false`: forgets the ids and the user, clears the queue. When nothing was granted
     on this page, the identity chunk is fetched for this only if the browser still holds
-    MIRA FIVE ids from an earlier visit.
+    MIRA FIVE ids from an earlier visit; otherwise the decline is recorded without it,
+    so flags stop drawing random-mode experiments for the visitor.
   - A CMP that knows the stored answer before the script runs sets
     `window.__mirafive_consent = { statistics, experiments, targeting }` (or `false`)
     first; the identity chunk then loads at once and the landing pageview counts as
@@ -143,10 +144,16 @@ Wiring common CMPs (statistics is the usual "analytics" category, targeting the
 | `data-mode="full"` | consentless | ids and device context after consent; loads identity on the first grant |
 | `data-hash` | | the fragment is the route (`#/pricing`): hash changes are pageviews |
 | `data-manual` | | no automatic pageviews; send them with `mirafive("pageview")` |
-| `data-autocapture` | | clicks, submits and changes as `$autocapture`; `="off"` or `="false"` disables |
-| `data-site-search` | | full mode: `$search` from `q`, `s`, `search`, `query`; `="term,k"` names the parameters |
+| `data-autocapture` | | clicks, submits and changes as `$autocapture` |
+| `data-site-search` | | full mode: `$search` from `q`, `s`, `search`, `query`; `="term, k"` names the parameters |
 | `data-flags` | | load flags at once (otherwise on the first flag verb) |
 | `data-track-localhost` | | also send from `localhost` and other local hosts |
+
+The on/off attributes (`data-hash` to `data-track-localhost`) are on when present, and
+off when absent or set to `off` or `false` (any case), so a template can write
+`data-autocapture="{{ enabled }}"`. No other `data-*` attribute is read. A `data-key`
+that is not a website key (`mf_…`, or a legacy `mira_ik_…`) logs `[mirafive] bad key`
+on every host; the page still sends.
 
 ### Verbs
 
@@ -169,13 +176,23 @@ Wiring common CMPs (statistics is the usual "analytics" category, targeting the
 
 Unknown verbs warn in development (on a local host) and do nothing.
 
-Verbs whose chunk has not arrived yet wait and run in call order once it has. Two
-exceptions: `flag` and `config` return the fallback at once until flags have loaded
-(replaying a read later would count an experiment exposure for a value the page never
-showed), so read flags inside a `flags` listener. And while a granted consent waits
-for the identity chunk, `track`, `pageview` and `flush` wait with it, so an event right
-after `consent` is not lost. A `flags` listener registered before flags load returns
-no unsubscribe function.
+Verbs whose chunk has not arrived yet wait and run in call order once it has. Between a
+consent grant and the identity chunk's arrival, events (automatic pageviews,
+autocapture, `track`) are held and sent with their original times and the new ids once
+identity applies the answer; a `flush` in that window waits for identity too. A
+`flags` listener registered before flags load returns no unsubscribe function.
+
+`flag` and `config` are not replayed (a replayed read would count an experiment
+exposure for a value the page never showed). Before `mira.js` has run, the queue
+snippet answers them with `undefined`; after it has run and until flags have loaded,
+they answer the fallback. Read flags inside a `flags` listener, which runs once they
+are loaded and again when they change.
+
+A call that throws (a callback that throws, say) is skipped with a development
+warning; the calls after it still run. A chunk that fails to load (network, SRI
+mismatch, CSP) logs `[mirafive] <chunk> chunk failed` on every host, drops the calls
+and held events waiting for it (`anonymousId` callbacks get `undefined`), and is
+requested again the next time it is needed.
 
 ### What loads when
 
@@ -231,8 +248,9 @@ connect-src https://events.mirafive.io    (or your data-host)
 ```
 
 `connect-src` covers both batches and flags. The inline queue snippet needs the page's
-`nonce` or its hash in `script-src`; under `'strict-dynamic'` the loader's chunks are
-allowed through the loader.
+`nonce` or its hash in `script-src`. Under `'strict-dynamic'` the host allowlist is
+ignored: give the `mira.js` tag the page's `nonce` too; the chunks it inserts are then
+allowed through it.
 
 ### SRI with the pinned file
 
@@ -265,7 +283,10 @@ prefer `@mirafive/sdk-browser` or a MIRA FIVE framework package over the script 
 | Symptom | Cause and fix |
 |---|---|
 | Nothing arrives | On `localhost` add `data-track-localhost`; check Do Not Track, Global Privacy Control and `__mirafive_ignore`; with `data-mode="full"`, `mirafive("consent", true)` must have run; batches leave after 5 s or on tab hide (`mirafive("flush")` sends now). |
-| `[mirafive] mira.js needs data-key` | The tag has no `data-key`, or the loader was inlined or loaded as a module. |
+| `[mirafive] no data-key` | The tag has no `data-key`. |
+| `[mirafive] bad key` | `data-key` is not a website key (`mf_…`); a secret key, or a typo. |
+| `[mirafive] no script tag` | The loader was inlined, loaded as `type="module"` or run through `eval`; load it by `src`. |
+| `[mirafive] <chunk> chunk failed` | The chunk was blocked: network, a CSP without the CDN origin (or without the loader's nonce under `'strict-dynamic'`), or an SRI mismatch. |
 | `403 secret_key_in_path` / `website_key_as_bearer` | You pasted a secret key. Use the website key (`mf_…` of a website source). |
 | `403 origin_not_allowed` | Add the site's origin to the source's allowed origins in MIRA FIVE. |
 | `400 collection_mode_not_allowed` | `data-mode="full"` on a consentless source: switch the source to full or drop the attribute. |
@@ -289,7 +310,8 @@ Add MIRA FIVE analytics to this website with the hosted script.
    mirafive("consent", { statistics, experiments, targeting }) from the CMP's consent callback
    (or set window.__mirafive_consent before the tag when the answer is known server-side).
 4. If the site sends a Content-Security-Policy, add https://cdn.mirafive.io to script-src and
-   https://events.mirafive.io to connect-src, and give the inline snippet the page's nonce.
+   https://events.mirafive.io to connect-src, and give the inline snippet the page's nonce. If
+   script-src uses 'strict-dynamic', the mira.js tag needs the page's nonce as well.
 5. Verify: load a page (not localhost), run mirafive("flush") in the console, and check the network
    tab for POST https://events.mirafive.io/v1/batch/<key> answering 202; report what you changed.
 Do not add other analytics libraries, cookies or consent banners.
@@ -308,12 +330,14 @@ Facts for agents:
   page sends nothing at all. Consentless mode needs no consent call and no banner.
 - Verbs: `track`, `pageview`, `flush`, `consent`, `identify`, `reset`, `anonymousId`
   (callback), `search`, `flag`, `config`, `flags` (listener), `flagProperties`. Read
-  flags inside a `flags` listener; before flags load, `flag` returns the fallback.
+  flags inside a `flags` listener: before `mira.js` runs `flag` returns `undefined`,
+  and until flags load it returns the fallback.
 - Server frameworks: `mirafive/sdk-laravel` renders this tag with `@mirafiveScript`,
   `mirafive/sdk-symfony` with `mirafive_script()`. Bundled apps use
   `@mirafive/sdk-browser` or a framework package instead of the tag.
-- Nothing throws for transport reasons; problems show as `[mirafive] …` console
-  warnings on local hosts only.
+- Nothing throws. Setup problems (`[mirafive] no data-key`, `bad key`, `no script tag`,
+  `<chunk> chunk failed`) are logged on every host; everything else warns on local
+  hosts only.
 - Verify an install in devtools: Network shows `mira.js` (200), then after
   `mirafive("flush")` a `POST …/v1/batch/{key}` with a `text/plain` body whose
   `context.sdk` is `mirafive-tracker/0.5.0`, answered `202 { "accepted": n, "dropped": 0 }`.
