@@ -56,8 +56,10 @@ To release, bump `version` in `package.json` (and any SDK version constant), add
 
 `cdn/Dockerfile` builds the tracker and serves `dist/` from nginx (`cdn/nginx.conf`): `mira.js`
 for an hour, content-hashed files forever, `manifest.json` for five minutes, CORS on all of them,
-gzip precompressed, anything else 404. Coolify builds the `cdn` branch, which the release
-workflow moves to each release tag, so the CDN always serves the last release. `cdn/history.ts` also copies the pinned loaders and
+gzip precompressed, anything else 404. After every release, `.github/workflows/cdn.yml`
+builds the image, pushes it to `registry.git.cloo-gmbh.de/cloo/mirafive/mirafive/cdn`
+(`:latest` plus `:sha-<commit>` for rollbacks), deploys the Coolify app `cdn` through the API and
+checks that cdn.mirafive.io serves the new version. By hand: `gh workflow run cdn.yml --ref vX.Y.Z`. `cdn/history.ts` also copies the pinned loaders and
 chunks of every earlier release from npm into the image, so pinned loaders and an hour-old
 `mira.js` keep finding their chunks. `cdn/legacy/` holds the pre-1.0 `c.js`/`f.js` exactly as they were served; delete
 it and its two nginx locations once the app no longer accepts their wire.
