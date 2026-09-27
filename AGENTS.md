@@ -31,8 +31,8 @@ browser.
 - The tracker is built from `@mirafive/sdk-browser` and must not reimplement a feature:
   the loader reads attributes, runs the queue and loads chunks; each chunk is one
   sdk-browser plugin entry plus `register()`. A behaviour change belongs in sdk-browser.
-- sdk-browser comes from `file:../sdk-browser` (build its `dist/` first). Switch the
-  devDependency to `^1.0.0` once it is published.
+- sdk-browser is the published `^1.0.0` devDependency. To try an unreleased change,
+  `bun link` it from `../sdk-browser`; never commit a `file:` path.
 - Chunks register only through `window.__mirafive_chunk`. Their sha256 digests are baked into the loader at build time and the file names derive from them; never hand-edit `dist/`.
 - The CDN keeps old chunks and pinned loaders: a cached `mira.js` (one hour) and every
   pinned copy still ask for the chunks they were built with.
