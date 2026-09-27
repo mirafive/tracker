@@ -48,7 +48,6 @@ jobs:
             esac
           done
           mv release/manifest.json site/
-          cp cdn/legacy/*.js site/
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
           test "$(jq -r .version site/manifest.json)" = "${TAG#v}"
           jq -r '.loader.file, (.chunks[].file)' site/manifest.json | while read -r f; do
@@ -81,9 +80,7 @@ jobs:
           }
 
           for f in site/chunks/*.js; do immutable "chunks/$(basename "$f")"; done
-          for f in site/mira.????????.js site/?.????????.js; do immutable "$(basename "$f")"; done
-          put c.js
-          put f.js
+          for f in site/mira.????????.js; do immutable "$(basename "$f")"; done
           put manifest.json
           put mira.js
 

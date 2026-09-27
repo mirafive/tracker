@@ -54,12 +54,14 @@ To release, bump `version` in `package.json` (and any SDK version constant), add
 
 ## Hosting (cdn.mirafive.io)
 
-`cdn/Dockerfile` builds the tracker and serves `dist/` from nginx (`cdn/nginx.conf`): `mira.js`
-for an hour, content-hashed files forever, `manifest.json` for five minutes, CORS on all of them,
-gzip precompressed, anything else 404. After every release, `.github/workflows/cdn.yml`
-builds the image, pushes it to `ghcr.io/mirafive/cdn`
-(`:latest` plus `:sha-<commit>` for rollbacks), deploys the Coolify app `cdn` through the API and
-checks that cdn.mirafive.io serves the new version. By hand: `gh workflow run cdn.yml --ref vX.Y.Z`. `cdn/history.ts` also copies the pinned loaders and
-chunks of every earlier release from npm into the image, so pinned loaders and an hour-old
-`mira.js` keep finding their chunks. `cdn/legacy/` holds the pre-1.0 `c.js`/`f.js` exactly as they were served; delete
-it and its two nginx locations once the app no longer accepts their wire.
+cdn.mirafive.io is a Bunny pull zone (`mirafive-cdn`) in front of a Bunny storage zone of the same
+name; there is no server. After every release, `.github/workflows/cdn.yml` uploads that release's
+GitHub assets to the storage zone and checks the CDN serves the new version. Content-hashed files
+are uploaded once and never replaced, so pinned loaders and an hour-old `mira.js` keep finding
+their chunks; `mira.js` and `manifest.json` are replaced last. By hand, also to roll back:
+`gh workflow run cdn.yml -f tag=vX.Y.Z`.
+
+Headers are pull zone edge rules, not files in this repo: `mira.js` one hour in browsers and five
+minutes at the edge, `manifest.json` five minutes and one minute, content-hashed files a year and
+`immutable`, CORS on `js` and `json`, `nosniff` everywhere. The workflow waits out the edge times
+instead of purging, so it needs only the storage zone password (`BUNNY_STORAGE_PASSWORD`).
