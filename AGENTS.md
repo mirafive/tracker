@@ -51,3 +51,13 @@ browser.
 ## Releasing
 
 To release, bump `version` in `package.json` (and any SDK version constant), add a `## X.Y.Z — YYYY-MM-DD` section to `CHANGELOG.md`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. `.github/workflows/release.yml` checks both, runs `bun run check`, stages it on npm through trusted publishing (no token) and creates the GitHub release from the changelog section. The version goes live only after a maintainer approves it with 2FA on npmjs.com (`npm stage approve`). Never `npm publish` from a laptop.
+
+## Hosting (cdn.mirafive.io)
+
+`cdn/Dockerfile` builds the tracker and serves `dist/` from nginx (`cdn/nginx.conf`): `mira.js`
+for an hour, content-hashed files forever, `manifest.json` for five minutes, CORS on all of them,
+gzip precompressed, anything else 404. Coolify builds the `cdn` branch, which the release
+workflow moves to each release tag, so the CDN always serves the last release. `cdn/history.ts` also copies the pinned loaders and
+chunks of every earlier release from npm into the image, so pinned loaders and an hour-old
+`mira.js` keep finding their chunks. `cdn/legacy/` holds the pre-1.0 `c.js`/`f.js` exactly as they were served; delete
+it and its two nginx locations once the app no longer accepts their wire.

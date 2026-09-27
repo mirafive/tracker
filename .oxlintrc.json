@@ -58,5 +58,5 @@
       }
     }
   ],
-  "ignorePatterns": ["dist/**", "test/fixtures/**"]
+  "ignorePatterns": ["dist/**", "test/fixtures/**", "cdn/legacy/**"]
 }

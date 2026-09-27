@@ -64,3 +64,7 @@ jobs:
           assets=()
           if [ -f dist/manifest.json ]; then assets=(dist/mira.js dist/mira.*.js dist/manifest.json dist/chunks/*.js); fi
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$VERSION" --notes-file notes.md "${assets[@]}"
+
+      # cdn.mirafive.io builds the cdn branch (cdn/Dockerfile); a push to it makes Coolify deploy.
+      - name: Deploy the CDN
+        run: git push --force origin "$GITHUB_SHA:refs/heads/cdn"

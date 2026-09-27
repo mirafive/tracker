@@ -5,5 +5,5 @@
   "trailingComma": "none",
   "sortImports": true,
   "sortPackageJson": true,
-  "ignorePatterns": ["dist/**", "test/fixtures/**", "bun.lock", "**/*.md"]
+  "ignorePatterns": ["dist/**", "test/fixtures/**", "cdn/legacy/**", "bun.lock", "**/*.md"]
 }
